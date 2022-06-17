@@ -12,6 +12,7 @@ import pyproj
 import shapefile as pyshp
 import copy
 import pandas as pd
+import utm
 ZONE = 11
 pj = pyproj.Proj(proj='utm', zone=ZONE, ellps='WGS84')
 OUTPUT_FOLDER = r'Y:\Users\Trevor\crossSlope'
@@ -25,6 +26,8 @@ sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\LAS_kit')
 import LAS_CLASS 
 sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\TIFF_kit')
 import TIFF_CLASS 
+sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\ICC_kit')
+import ICC_CLASS
 lr = linear_model.LinearRegression()
 ransac = linear_model.RANSACRegressor()
 
@@ -519,6 +522,130 @@ def visualize(outname,trans_X,long_Y,x,y,distls,distrs,slope,newslope):
     # print(outname)
     # las.export_to_las(las.lasin.points[valid],outname)
 
+def extractCrossSlope_TIFF(path2tiff, path2icc):
+    # Currently this function goes through each tiff and finds a box in every TIFF
+    # Still need to figure out which tiff to use and then implement the box code
+    dicti = {}
+    survey_name = os.path.basename(os.path.dirname(path2tiff))
+    date_folder = os.path.basename(os.path.dirname(os.path.dirname(path2tiff)))
+
+    OUTPUT_FOLDER_DATED = os.path.join(OUTPUT_FOLDER, date_folder)
+
+    if not os.path.exists(OUTPUT_FOLDER_DATED):
+        os.mkdir(OUTPUT_FOLDER_DATED)
+        global SURVEY_OUTPUT_FOLDER
+    SURVEY_OUTPUT_FOLDER = os.path.join(OUTPUT_FOLDER_DATED, survey_name)
+    if not os.path.exists(SURVEY_OUTPUT_FOLDER):
+        os.mkdir(SURVEY_OUTPUT_FOLDER)
+    print('[Processing] >> ', path2tiff)
+
+    tiff = TIFF_CLASS.Geotiff(path2tiff)
+
+    icc = ICC_CLASS.ICC(path2icc)
+    
+    # random dmi stuff
+    dmichain = (icc.icc_data.ppgps.dmi * icc.icc_data.chg_data.dx)
+    dmiFun = interp1d(dmichain,np.arange(0,len(dmichain)))
+    lat = icc.icc_data.ppgps.lat
+    lon = icc.icc_data.ppgps.lon
+
+    # getting a list of dmi point every 5 meters (could change this value, it's variable x)
+    dmi_every_x_m = []
+    x = 5
+    prev_val = dmichain[0]
+    dmi_every_x_m.append(icc.icc_data.ppgps.dmi[0])
+    # get dmi points every 5m
+    for idx in range(len(dmichain)):
+        val = dmichain[idx]
+        if abs(val - prev_val) >= x:
+            dmi_every_x_m.append(icc.icc_data.ppgps.dmi[idx])
+            prev_val = val
+    
+    # convert the dmi_every_x_m to lat and lon (this is lat and lon points along icc every 5m)
+    latlon_every_x_m = []
+    for dmi in dmi_every_x_m:
+        #get latlon every x m
+        _, lat, lon, _ = icc.findlatlon_fromdmi(dmi)
+        latlon_every_x_m.append((lat,lon))
+
+    # convert to a numpy array
+    numpy_latlon = np.array(latlon_every_x_m)
+    # idk if this is useful anymore
+    pxpy_numpy = tiff.get_pxpy(numpy_latlon[:,0], numpy_latlon[:,1])
+    value_numpy = tiff.get_value_by_latlon(numpy_latlon[:,0], numpy_latlon[:,1])
+
+    #try with one test point
+    # i'm choosing a random test point here to make my life easier
+    # in the future we'd go through and repeat the process for every point in this list
+    test_latlon = latlon_every_x_m[50]
+    # convert test point to eastings/northings
+    test_en = utm.from_latlon(test_latlon[0], test_latlon[1], force_zone_number=icc.utm_zone_number, force_zone_letter=icc.utm_zone_letter)
+
+    # make a box with given lat lon in center
+    # the box is made of eastings and northings though
+    box_l = test_en[0] - 2.5
+    box_r = test_en[0] + 2.5
+    box_t = test_en[1] + 2.5
+    box_b = test_en[1] - 2.5
+    
+    # check points every 10 cm = 0.1 m
+    # could change this value easily by changing INCREMENT
+    # initialize box and eenn box
+    box_tiff_img = np.zeros(shape=(51,51))
+    eenn_box = np.zeros(shape=(51,51,2))
+    INCREMENT = 0.1
+    x = 0
+    y = 0
+    # creating eenn box
+    # this is a box of coordinate points in eastings and northings that are within 5m of the test point
+    # the coordinate points are spaced 0.1m apart and it makes a 51x51 shape
+    for ee in np.arange(box_l, box_r + INCREMENT, INCREMENT):
+        for nn in np.arange(box_b, box_t + INCREMENT, INCREMENT):
+            eenn_box[x][y][0] = ee
+            eenn_box[x][y][1] = nn
+            y+=1
+        x+=1
+        y = 0
+    # could print it here to see if you want
+    #print(eenn_box)
+
+    # rotate the box to line up with icc
+    # haven't figured this part out yet, but here is where you'd rotate the eenn box
+    """ from scipy.ndimage import rotate
+    heading = icc.icc_data.ppgps.heading
+    icc_idx, curr_dmi = icc.findDMI_latlon(test_latlon[0], test_latlon[1])
+    print(icc_idx, curr_dmi)
+    curr_heading = heading[icc_idx]
+    print(curr_heading)
+    rotated_box_e = rotate(eenn_box[:,:,0], angle = curr_heading)
+    rotated_box_n = rotate(eenn_box[:,:,1], angle = curr_heading)
+    print(rotated_box_e)
+    print(rotated_box_n) """
+
+    # this is where we are making the actual box of Z values from the tiff
+    for x in range(eenn_box.shape[0]):
+        for y in range(eenn_box.shape[1]):
+            # go through each point in eenn box
+            ee = eenn_box[x][y][0]
+            nn = eenn_box[x][y][1]
+            # convert point to lat/lon
+            temp_latlon = utm.to_latlon(ee, nn, zone_number=icc.utm_zone_number, zone_letter=icc.utm_zone_letter)
+            # get value for that lat/lon
+            lat_np = np.array([temp_latlon[0]])
+            lon_np = np.array([temp_latlon[1]])
+            # populate our box with the tiff value for that point
+            box_tiff_img[x][y] = tiff.get_value_by_latlon(lat_np, lon_np)
+
+    # show the original tiff and then the box version
+    # will show all 5 tiffs and 5 boxes that look purple
+    # one of the boxes should look yellow since it's actually road at the icc point we chose
+    # if all the boxes are purple something is wrong, lol
+    plt.imshow(tiff.img)
+    plt.waitforbuttonpress()
+    plt.imshow(box_tiff_img)
+    plt.waitforbuttonpress()
+
+    
 def extractCrossSlope(path2las,path2icc):
     dicti = {}
     survey_name = os.path.basename(path2las)[:-4]
@@ -584,8 +711,12 @@ if __name__ == '__main__':
         date = os.path.basename(os.path.dirname(path2icc))
         iccname = os.path.basename(path2icc)
         iccname = iccname.split('icc')[0]
-        for path2las in glob.glob(r"X:\LiDAR\Combines\%s\%s*.las"%(date,iccname)):
-            dicti,survey_name = extractCrossSlope(path2las,path2icc)
-
-        newdf = pd.DataFrame(dicti)
-        newdf.to_csv(r'Y:\Users\Trevor\crossSlope\csvs\%s.csv'%survey_name,index=False)       
+        """ for path2las in glob.glob(r"X:\LiDAR\Combines\%s\%s*.las"%(date,iccname)):
+            dicti,survey_name = extractCrossSlope(path2las,path2icc) """
+        for path2tiff in glob.glob(r"Y:\AT_2021\ASSETS\tiffs\TIFF_STDEV\%s\%s*\%s*.tiff"%(date, iccname, iccname)):
+            # check for ZSTD Tiffs only
+            if "ZSTD" in path2tiff:
+                print(path2tiff)
+                extractCrossSlope_TIFF(path2tiff, path2icc)
+        #newdf = pd.DataFrame(dicti)
+        #newdf.to_csv(r'Y:\Users\Trevor\crossSlope\csvs\%s.csv'%survey_name,index=False)       
