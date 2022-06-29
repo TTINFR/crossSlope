@@ -1,7 +1,7 @@
 #For the use of cross slope analysis
 from cmath import nan
-import os,glob,sys
-from turtle import forward
+import os,glob,sys,math
+import utm
 import numpy as np
 import pandas
 from scipy.io import loadmat
@@ -13,19 +13,21 @@ import pyproj
 import shapefile as pyshp
 import copy
 import pandas as pd
-ZONE = 11
-pj = pyproj.Proj(proj='utm', zone=ZONE, ellps='WGS84')
+# ZONE = 11
+# pj = pyproj.Proj(proj='utm', zone=ZONE, ellps='WGS84')
 OUTPUT_FOLDER = r'Y:\Users\Trevor\crossSlope'
 LINE_FOLDER = r'Y:\Users\Trevor\crossSlope'
 SPACING = 20 #Meter sapcing of segments
 LONGITUDE_SEARCH = SPACING/2 #Meter sapcing of segments
 FINDPMARKS = False
-DOVISUALIZE = False
+DOVISUALIZE = True
 
-sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\LAS_kit')
+# sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\LAS_kit')
 # import LAS_CLASS 
 sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\TIFF_kit')
 import TIFF_CLASS 
+# sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\ICC_kit')
+# import ICC_CLASS 
 lr = linear_model.LinearRegression()
 ransac = linear_model.RANSACRegressor()
 
@@ -38,7 +40,6 @@ def findChainage(xx,yy):
     return ch
 
 def resample_lat_lon(lat,lon,resampling_spacing):
-    pj = pyproj.Proj(proj='utm', zone=ZONE, ellps='WGS84')
     lato = []
     lono = []
     xx,yy = pj(lon,lat)
@@ -330,8 +331,8 @@ def findType(slptypesample,trans_X,elev_Z,lsz,rsz):
         slopetype = 'Crown'
         index_max = np.argmax(elev_Z)+1#Make sure the crown does not pass over to other side
         if index_max < len(elev_Z):
-            elev_Z = elev_Z[:index_max]
-            trans_X = trans_X[:index_max]
+            elev_Z = elev_Z[index_max:]
+            trans_X = trans_X[index_max:]
     return trans_X, elev_Z, slopetype
 
 def method1(las,valid,distls,distrs):
@@ -474,7 +475,10 @@ def getCrossSlope(las,id_valid_below_sen1_KM,id_valid_below_sen2_KM,survey_name,
                 slopes.append(slope)
                 slopes.append(newslope)                  
                 if DOVISUALIZE:#Do a visulaize output
-                    visualize(outname,visualxy[0],visualxy[1],x,z,distls,distrs,slope,newslope)
+                    try:
+                        visualize(outname,visualxy[0],visualxy[1],x,z,distls,distrs,slope,newslope)
+                    except:
+                        print('Broke visualize')
                 
             else:
                 print('Already done: ',outname)
@@ -487,7 +491,7 @@ def getCrossSlope(las,id_valid_below_sen1_KM,id_valid_below_sen2_KM,survey_name,
 def visualize(outname,trans_X,long_Y,x,y,distls,distrs,slope,newslope):
     '''XY is points of slope calclation, xy are from all the points available'''
     halfidx = trans_X[len(trans_X)//2]
-    halfdist = (distrs+distls)/2
+    # halfdist = (distrs+distls)/2
     half1 = np.mean(long_Y[:len(trans_X)//2])
     half2 = np.mean(long_Y[len(trans_X)//2:])
     #Ransac visual
@@ -513,7 +517,7 @@ def visualize(outname,trans_X,long_Y,x,y,distls,distrs,slope,newslope):
     #Plot
     plt.title('%s\n %3.3f%s %3.3f%s'%(os.path.basename(outname),slope,'%',newslope,'%'))
     plt.plot(x, y, color="navy", label="just a line")
-    plt.gca().invert_xaxis()
+    # plt.gca().invert_xaxis()
     plt.savefig(outname.replace('.las','.png'))
     # plt.show()
     plt.close()
@@ -596,6 +600,10 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
     dmiFun = interp1d(dmichain,np.arange(0,len(dmichain)))
     lat = icc.ppgps.lat
     lon = icc.ppgps.lon
+    _,_,zoneID,_ = utm.from_latlon(lat,lon)
+    global pj
+    pj = pyproj.Proj(proj='utm', zone=zoneID, ellps='WGS84')
+
     # DMIee,DMInn = pj(lon,lat)
     # treedmi = KDTree(np.array([DMIee,DMInn]).T)
 
@@ -607,13 +615,13 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
         st = endChainage
         en = startChainage
     stdmi = int(dmiFun(st))
-    lat = icc.ppgps.lat[stdmi]
-    lon = icc.ppgps.lon[stdmi]
+    # lat = icc.ppgps.lat[stdmi]
+    # lon = icc.ppgps.lon[stdmi]
 
-    posit = False
-    tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen00_*ZSTD*.tiff')), reverse=True)
-    if posit:
-        tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen00_*ZSTD*.tiff')))
+    # tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen00_*ZSTD*.tiff')))#STD Does not give us the actual elev value
+    tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen01_below_*_Z_comp.tiff')))#STD Does not give us the actual elev value
+    if 's_' in survey_name or 'w_' in survey_name:
+        tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen01_below_*_Z_comp.tiff')),reverse=True)#STD Does not give us the actual elev value
 
 
     # lasindex,lasdistance = las.find_lat_lon(lat,lon)#Point of 0m
@@ -638,6 +646,7 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
         lat = icc.ppgps.lat[idmi]
         lon = icc.ppgps.lon[idmi]
         elv = icc.ppgps.elev[idmi]
+        heading = icc.ppgps.heading[idmi]
         # if dmi>icc.refrst and dmi<icc.secend:
         if True:
             if FINDPMARKS:
@@ -655,11 +664,11 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
                         distrs = 3
                     if distrs<1.5:
                         distrs = 1.5
-                '''THERE IS A OFFSET DISCREPANCY BETWEEN THE LIDAR AND THE MDR LOCATION'''
-                ofst = 1#Rough estimate, looks pretty close
-                distrs += -ofst
-                distls += ofst
-                print('LS:%.3f RS:%.3f  CHANGEDTO'%(distls,distrs))
+                # '''THERE IS A OFFSET DISCREPANCY BETWEEN THE LIDAR AND THE MDR LOCATION'''
+                # ofst = 1#Rough estimate, looks pretty close
+                # distrs += -ofst
+                # distls += ofst
+                # print('LS:%.3f RS:%.3f  CHANGEDTO'%(distls,distrs))
                 # buff = 0.2 #Extra little buffer
                 # distls += buff 
                 # distrs += buff 
@@ -671,7 +680,7 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
             # print('\nmdrkm = %s   laskm = %s'%(km,laschain))
             # id_valid_below_sen1_KM = id_valid_below_sen1 & id_valid_km
             # id_valid_below_sen2_KM = id_valid_below_sen2 & id_valid_km
-            slopes, slopetype = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon)
+            slopes, slopetype = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon,heading)
             dicti['Route'].append(path2icc)
             dicti['kms'].append(km/1000)
             dicti['lat'].append(lat)
@@ -680,18 +689,20 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
             dicti['Compare'].append(None)
             dicti['S1Fitted_%s'%survey_name].append(slopes[0])
             dicti['S1HalvedLane_%s'%survey_name].append(slopes[1])
-            dicti['S2Fitted_%s'%survey_name].append(slopes[2])
-            dicti['S2HalvedLane_%s'%survey_name].append(slopes[3])
+            # dicti['S2Fitted_%s'%survey_name].append(slopes[2])
+            # dicti['S2HalvedLane_%s'%survey_name].append(slopes[3])
+            dicti['S2Fitted_%s'%survey_name].append('NA')
+            dicti['S2HalvedLane_%s'%survey_name].append('NA')
             if slopetype == 'Crown':
                 dicti['Super_Elevation'].append(None)
                 dicti['Crown_Slope'].append(np.mean(slopes))
             else:
                 dicti['Super_Elevation'].append(np.mean(slopes))
                 dicti['Crown_Slope'].append(None)
-            if startChainage>endChainage:
-                laschain = (laschain-SPACING)
-            else:
-                laschain = (laschain+SPACING)
+            # if startChainage>endChainage:
+            #     laschain = (laschain-SPACING)
+            # else:
+            #     laschain = (laschain+SPACING)
     return dicti
 
 def extractCrossSlopeTIFF(path2TiffFolder,path2icc):
@@ -711,19 +722,19 @@ def extractCrossSlopeTIFF(path2TiffFolder,path2icc):
     dicti = useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc)
     return dicti, survey_name
 
-def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon):
+def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading):
     slopes = []
-
-
-
-    for tiff in tiffList:
+    eenn_iccpoint = pj(lon,lat)
+    for tiff in tiffList:#Finding which Tiff we are working with TODO what if there are multiple tiffs covered?
         tiff = TIFF_CLASS.Geotiff(tiff)
         # tiff.find_rot_angle_PCA()
         values = tiff.get_value_by_latlon([lat],[lon])
-        if values.any() > -9998: #We will use this TIFF 
+        # if values.any() > -9998: #We will use this TIFF 
+        if values[0] > -9998: #We will use this TIFF 
             break
-    '''TODO CREATE THE BOX HERE'''
-    tiffBox = np.array(x,y,z)
+    '''CREATE THE BOX HERE'''
+    tiffBox = getTiffBox(tiff,lat,lon,heading,distls,distrs)
+    # tiffBox = np.array(x,y,z)
     
 
 
@@ -740,33 +751,204 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon):
         outname = outnames[a]
 
         if not os.path.exists(outname) or True:
-            
-            slope, newslope, visualxy, x, z, slopetype = methodTIFF(tiffBox,distls,distrs)
+            slope, newslope, visualxy, x, z, slopetype = methodTIFF(tiffBox,eenn_iccpoint,distls,distrs)
             # slope, newslope, visualxy, x, z, slopetype = method2(las,valid,distls,distrs)
-
             print('Sensor%d  %s Fit Line Reading = %3.3f%s   Half Lane Split  = %3.3f%s'%(a+1,slopetype,slope,'%',newslope,'%'))  
             slopes.append(slope)
             slopes.append(newslope)                  
             if DOVISUALIZE:#Do a visulaize output
-                visualize(outname,visualxy[0],visualxy[1],x,z,distls,distrs,slope,newslope)
-            
+                try:
+                    visualize(outname,visualxy[0],visualxy[1],x,z,distls,distrs,slope,newslope)
+                except:
+                    print('Broke visualize')
         else:
             print('Already done: ',outname)
     return slopes, slopetype
 
-def methodTIFF(las,distls,distrs):
+def rotate(origin, point, angle):
+    """
+    Rotate a point counterclockwise by a given angle around a given origin.
+    The angle should be given in radians.
+    """
+    ox, oy = origin
+    px, py = point
+
+    qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+    qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+    return qx,qy
+
+
+
+def getTiffBox(tiff,lat,lon,heading,distls,distrs):
+    # icc = ICC_CLASS.ICC(path2icc)
+    # # random dmi stuff
+    # dmichain = (icc.icc_data.ppgps.dmi * icc.icc_data.chg_data.dx)
+    # dmiFun = interp1d(dmichain,np.arange(0,len(dmichain)))
+    # lat = icc.icc_data.ppgps.lat
+    # lon = icc.icc_data.ppgps.lon
+
+    # # getting a list of dmi point every 5 meters (could change this value, it's variable x)
+    # dmi_every_x_m = []
+    # x = 5
+    # prev_val = dmichain[0]
+    # dmi_every_x_m.append(icc.icc_data.ppgps.dmi[0])
+    # # get dmi points every 5m
+    # for idx in range(len(dmichain)):
+    #     val = dmichain[idx]
+    #     if abs(val - prev_val) >= x:
+    #         dmi_every_x_m.append(icc.icc_data.ppgps.dmi[idx])
+    #         prev_val = val
+    
+    # convert the dmi_every_x_m to lat and lon (this is lat and lon points along icc every 5m)
+    # latlon_every_x_m = []
+    # for dmi in dmi_every_x_m:
+    #     #get latlon every x m
+    #     _, lat, lon, _ = icc.findlatlon_fromdmi(dmi)
+    #     latlon_every_x_m.append((lat,lon))
+
+    # convert to a numpy array
+    # numpy_latlon = np.array(latlon_every_x_m)
+    # # idk if this is useful anymore
+    # pxpy_numpy = tiff.get_pxpy(numpy_latlon[:,0], numpy_latlon[:,1])
+    # value_numpy = tiff.get_value_by_latlon(numpy_latlon[:,0], numpy_latlon[:,1])
+
+    #try with one test point
+    # i'm choosing a random test point here to make my life easier
+    # in the future we'd go through and repeat the process for every point in this list
+    # test_latlon = latlon_every_x_m[50]
+    # convert test point to eastings/northings
+    # test_en = utm.from_latlon(test_latlon[0], test_latlon[1], force_zone_number=icc.utm_zone_number, force_zone_letter=icc.utm_zone_letter)
+    # test_en = utm.from_latlon(lat, lon, force_zone_number=icc.utm_zone_number, force_zone_letter=icc.utm_zone_letter)
+    test_en = pj(lon,lat)
+
+
+    # make a box with given lat lon in center
+    # the box is made of eastings and northings though!!!
+    # box_l = test_en[0] - 2.5
+    # box_r = test_en[0] + 2.5
+    # box_t = test_en[1] + 2.5
+    # box_b = test_en[1] - 2.5
+    # box_l = test_en[0] - distls
+    # box_r = test_en[0] + distrs
+    # box_t = test_en[1] + LONGITUDE_SEARCH
+    # box_b = test_en[1] - LONGITUDE_SEARCH
+
+    needThisToGetSlopeType = 4
+
+    '''Rotates each of these boundary points to use later in a spatial area'''
+    # plt.scatter(test_en[0],test_en[1],c='y')
+    # plt.title('%s'%heading)
+    _,box_t = rotate(test_en, [test_en[0],(test_en[1] + LONGITUDE_SEARCH)], math.radians(heading)) #TODO Check if this rotate is even correct
+    # plt.scatter(_,box_t,c='b')
+    _,box_b = rotate(test_en, [test_en[0],(test_en[1] - LONGITUDE_SEARCH)], math.radians(heading)) #TODO Check if this rotate is even correct
+    # plt.scatter(_,box_b,c='r')
+    box_l,_ = rotate(test_en, [(test_en[0] - needThisToGetSlopeType-2),test_en[1]], math.radians(heading)) #TODO Check if this rotate is even correct
+    # plt.scatter(box_l,_,c='g')
+    box_r,_ = rotate(test_en, [(test_en[0] + needThisToGetSlopeType),test_en[1]], math.radians(heading)) #TODO Check if this rotate is even correct
+    # plt.scatter(box_r,_,c='black')
+    # plt.axis([test_en[0]-30, test_en[0]+30, test_en[1]-30, test_en[1]+30])
+    # plt.show()
+
+
+    
+    # check points every 10 cm = 0.1 m
+    # could change this value easily by changing INCREMENT
+    # initialize box and eenn box
+    # box_tiff_img = np.zeros(shape=(51,51))
+    # eenn_box = np.zeros(shape=(51,51,2))
+    INCREMENT = 0.1
+    xitteration = np.arange(min(box_l,box_r), max(box_l,box_r) + INCREMENT, INCREMENT)
+    yitteration = np.arange(min(box_b,box_t), max(box_b,box_t) + INCREMENT*10, INCREMENT*10)
+    tiffBox = np.zeros(shape=(len(xitteration),len(yitteration),3))#x,y,elevation
+    x = 0
+    y = 0
+    # creating eenn box
+    # this is a box of coordinate points in eastings and northings that are within 5m of the test point
+    # the coordinate points are spaced 0.1m apart and it makes a 51x51 shape
+    # for ee in np.arange(box_l, box_r + INCREMENT, INCREMENT):
+    #     for nn in np.arange(box_b, box_t + INCREMENT, INCREMENT):
+            # ee,nn = rotate(test_en, [ee,nn], math.radians(heading)) #TODO Check if this rotate is even correct
+    for ee in xitteration:
+        for nn in yitteration:
+            tiffBox[x][y][0] = ee
+            tiffBox[x][y][1] = nn
+            y+=1
+        x+=1
+        y = 0
+    # could print it here to see if you want
+    #print(eenn_box)
+    # rotate the box to line up with icc
+    # haven't figured this part out yet, but here is where you'd rotate the eenn box
+    # from scipy.ndimage import rotate
+    # print(heading)
+    # rotated_box_e = rotate(eenn_box[:,:,0], angle = heading)
+    # rotated_box_n = rotate(eenn_box[:,:,1], angle = heading)
+    # print(rotated_box_e)
+    # print(rotated_box_n)
+
+
+
+
+    # this is where we are making the actual box of Z values from the tiff
+    aa = []
+    bb = []
+    for x in range(tiffBox.shape[0]):
+        for y in range(tiffBox.shape[1]):
+            # go through each point in eenn box
+            ee = tiffBox[x][y][0]
+            nn = tiffBox[x][y][1]
+            # convert point to lat/lon
+            # temp_latlon = utm.to_latlon(ee, nn, zone_number=icc.utm_zone_number, zone_letter=icc.utm_zone_letter)
+            temp_latlon = pj(ee,nn, inverse=True)
+            # get value for that lat/lon
+            lat_np = np.array([temp_latlon[1]])
+            lon_np = np.array([temp_latlon[0]])
+            # populate our box with the tiff value for that point
+            # box_tiff_img[x][y] = tiff.get_value_by_latlon(lat_np, lon_np)
+            tiffBox[x][y][2] = tiff.get_value_by_latlon(lat_np, lon_np)
+            aa.append(ee)
+            bb.append(nn)
+
+    # show the original tiff and then the box version
+    # will show all 5 tiffs and 5 boxes that look purple
+    # one of the boxes should look yellow since it's actually road at the icc point we chose
+    # if all the boxes are purple something is wrong, lol
+    # plt.imshow(tiffBox)
+    # plt.imshow(tiff.img)
+    # plt.imshow(box_tiff_img)
+    # plt.scatter(aa,bb,c='g')
+    # plt.scatter(test_en[0],test_en[1],c='r')
+    # plt.show()
+    # plt.waitforbuttonpress()
+    # tiffBox = np.concatenate(eenn_box,box_tiff_img)#Get the 
+    
+
+    return tiffBox
+
+    
+
+
+def methodTIFF(tiffBox,eenn_iccpoint,distls,distrs):
     '''This method takes an average of the longitudial points ang plots on a transverse'''
     #Need something here to select points a certain distance away, get the height
     # offsets = las.lasin.tt_trans_offset_m[valid]
     # points = las.lasin.z[valid]
     
-    x = list(np.arange(-6,8,0.1))#Not sure about side
+    # x = list(np.arange(-6,8,0.1))#Not sure about side
     # x = list(np.arange(-distrs,distls,0.1))#Not sure about side
     z = []
+    x = []
     trans_X = []
     elev_Z = []
     slptypesample = []
-    for xx in x:
+
+
+    tiffBox[:,:,0] = tiffBox[:,:,0]-eenn_iccpoint[0]
+    tiffBox[:,:,1] = tiffBox[:,:,1]-eenn_iccpoint[1]
+    x = tiffBox[:,:,0]
+    resonablevalue = np.median(tiffBox[:,:,2])
+    for longstrip in range(tiffBox.shape[0]):
+        xx = tiffBox[longstrip][0][0]
         '''Goes back to Full, wastes time'''
         # id_valid = las.filter_by_offset(OFFSET=xx)
         # newValid = valid & id_valid
@@ -776,27 +958,37 @@ def methodTIFF(las,distls,distrs):
         # id_valid = offsets== xx*TT_SCALE
         # id_valid = abs(offsets - xx*TT_SCALE) < 1 #Not sure about this range yet...
         # id_valid = abs(offsets/TT_SCALE - xx) < 0.05 #Not sure about this range yet...
-        p = points[id_valid]
-        if len(p) < 1:
-            z.append(nan)
-            continue
-        avpoint = np.mean(p)
-        z.append(avpoint)
+        # p = points[id_valid]
+        # if len(p) < 1:
+        #     z.append(nan)
+        #     continue
+        # avpoint = np.mean(p)
+        # z.append(avpoint)
 
+        samples_along_y = tiffBox[longstrip][:,2]#get a strip of elevation values along the longitudinal
+        samples_along_y = samples_along_y[(samples_along_y > -9999)]#Remove garbage alues
+        # if xx > -distrs and xx < distls:  
+        avpoint = np.mean(samples_along_y)
+        if abs(avpoint-resonablevalue) > 50:#skip outlandish values
+            continue
+
+        z.append(avpoint)
         if xx > -distrs and xx < distls:
-            trans_X.append(xx)
             elev_Z.append(avpoint)
+            trans_X.append(xx)
             '''Get the end points'''
-            lsz = avpoint
+            rsz = avpoint
             if len(trans_X) == 1:
-                rsz = avpoint
-        if 3.25 < xx < 4.25:
+                lsz = avpoint
+
+        if -3.25 > xx > -4.25:
             slptypesample.append(avpoint)
 
 
     #Split lane in half reading
     trans_X, elev_Z, slopetype = findType(slptypesample,trans_X,elev_Z,lsz,rsz)
-    halfdist = (distrs+distls)/2
+    # halfdist = (distrs+distls)/2
+    halfdist = (abs(trans_X[0])+abs(trans_X[-1]))/2#The distance can be truncated based on the crown slope
     half1 = np.mean(elev_Z[:len(trans_X)//2])
     half2 = np.mean(elev_Z[len(trans_X)//2:])
     newslope = ((half2-half1)/halfdist) *100
