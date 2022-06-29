@@ -1,6 +1,6 @@
 #For the use of cross slope analysis
 from cmath import nan
-import os,glob,sys,math
+import os,glob,sys,math,time
 import utm
 import numpy as np
 import pandas
@@ -603,6 +603,7 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
     _,_,zoneID,_ = utm.from_latlon(lat,lon)
     global pj
     pj = pyproj.Proj(proj='utm', zone=zoneID, ellps='WGS84')
+    tiff = 'None'
 
     # DMIee,DMInn = pj(lon,lat)
     # treedmi = KDTree(np.array([DMIee,DMInn]).T)
@@ -680,7 +681,7 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
             # print('\nmdrkm = %s   laskm = %s'%(km,laschain))
             # id_valid_below_sen1_KM = id_valid_below_sen1 & id_valid_km
             # id_valid_below_sen2_KM = id_valid_below_sen2 & id_valid_km
-            slopes, slopetype = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon,heading)
+            slopes, slopetype,tiff = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon,heading,tiff)
             dicti['Route'].append(path2icc)
             dicti['kms'].append(km/1000)
             dicti['lat'].append(lat)
@@ -722,21 +723,28 @@ def extractCrossSlopeTIFF(path2TiffFolder,path2icc):
     dicti = useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc)
     return dicti, survey_name
 
-def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading):
+def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading,tiff):
     slopes = []
-    eenn_iccpoint = pj(lon,lat)
-    for tiff in tiffList:#Finding which Tiff we are working with TODO what if there are multiple tiffs covered?
-        tiff = TIFF_CLASS.Geotiff(tiff)
-        # tiff.find_rot_angle_PCA()
-        values = tiff.get_value_by_latlon([lat],[lon])
-        # if values.any() > -9998: #We will use this TIFF 
-        if values[0] > -9998: #We will use this TIFF 
-            break
-    '''CREATE THE BOX HERE'''
-    tiffBox = getTiffBox(tiff,lat,lon,heading,distls,distrs)
-    # tiffBox = np.array(x,y,z)
-    
 
+    '''Find the right TIFF TODO make it so that we can use two at once in cases of an overlap??'''
+    if type(tiff) == str:
+        for tiff in tiffList:#Finding which Tiff we are working with 
+            tiff = TIFF_CLASS.Geotiff(tiff)
+            values = tiff.get_value_by_latlon([lat],[lon])
+            if values[0] > -9998: #We will use this TIFF 
+                break
+    else:
+        values = tiff.get_value_by_latlon([lat],[lon])
+        if not values[0] > -9998: #We will use this TIFF 
+            for tiff in tiffList:#Finding which Tiff we are working with 
+                tiff = TIFF_CLASS.Geotiff(tiff)
+                values = tiff.get_value_by_latlon([lat],[lon])
+                if values[0] > -9998: #We will use this TIFF 
+                    break
+
+
+    '''CREATE THE BOX HERE'''
+    tiffBox = getTiffBox(tiff,lat,lon,heading)
 
     # outname_sen1_KM = SURVERY_OUTPUT_FOLDER+r'\%s_KM%03d_sen01.las'%(survey_name,km_num)
     # outname_sen2_KM = SURVERY_OUTPUT_FOLDER+r'\%s_KM%03d_sen02.las'%(survey_name,km_num)
@@ -747,6 +755,8 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading)
     outnames = [outname_sen00_KM]
     # outnames = [outname_sen1_KM]
     # valids = [id_valid_below_sen1_KM]
+
+    eenn_iccpoint = pj(lon,lat)
     for a in range(len(outnames)):#Itterate over each sensor
         outname = outnames[a]
 
@@ -755,7 +765,8 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading)
             # slope, newslope, visualxy, x, z, slopetype = method2(las,valid,distls,distrs)
             print('Sensor%d  %s Fit Line Reading = %3.3f%s   Half Lane Split  = %3.3f%s'%(a+1,slopetype,slope,'%',newslope,'%'))  
             slopes.append(slope)
-            slopes.append(newslope)                  
+            slopes.append(newslope)     
+                        
             if DOVISUALIZE:#Do a visulaize output
                 try:
                     visualize(outname,visualxy[0],visualxy[1],x,z,distls,distrs,slope,newslope)
@@ -763,7 +774,7 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading)
                     print('Broke visualize')
         else:
             print('Already done: ',outname)
-    return slopes, slopetype
+    return slopes, slopetype,tiff
 
 def rotate(origin, point, angle):
     """
@@ -779,7 +790,7 @@ def rotate(origin, point, angle):
 
 
 
-def getTiffBox(tiff,lat,lon,heading,distls,distrs):
+def getTiffBox(tiff,lat,lon,heading):
     # icc = ICC_CLASS.ICC(path2icc)
     # # random dmi stuff
     # dmichain = (icc.icc_data.ppgps.dmi * icc.icc_data.chg_data.dx)
@@ -868,10 +879,24 @@ def getTiffBox(tiff,lat,lon,heading,distls,distrs):
     # for ee in np.arange(box_l, box_r + INCREMENT, INCREMENT):
     #     for nn in np.arange(box_b, box_t + INCREMENT, INCREMENT):
             # ee,nn = rotate(test_en, [ee,nn], math.radians(heading)) #TODO Check if this rotate is even correct
+    aa = []
+    bb = []
     for ee in xitteration:
         for nn in yitteration:
             tiffBox[x][y][0] = ee
             tiffBox[x][y][1] = nn
+            # convert point to lat/lon
+            # temp_latlon = utm.to_latlon(ee, nn, zone_number=icc.utm_zone_number, zone_letter=icc.utm_zone_letter)
+            temp_latlon = pj(ee,nn, inverse=True)
+            # get value for that lat/lon
+            lat_np = np.array([temp_latlon[1]])
+            lon_np = np.array([temp_latlon[0]])
+            # populate our box with the tiff value for that point
+            # box_tiff_img[x][y] = tiff.get_value_by_latlon(lat_np, lon_np)
+            tiffBox[x][y][2] = tiff.get_value_by_latlon(lat_np, lon_np)
+            aa.append(ee)
+            bb.append(nn)
+
             y+=1
         x+=1
         y = 0
@@ -886,29 +911,6 @@ def getTiffBox(tiff,lat,lon,heading,distls,distrs):
     # print(rotated_box_e)
     # print(rotated_box_n)
 
-
-
-
-    # this is where we are making the actual box of Z values from the tiff
-    aa = []
-    bb = []
-    for x in range(tiffBox.shape[0]):
-        for y in range(tiffBox.shape[1]):
-            # go through each point in eenn box
-            ee = tiffBox[x][y][0]
-            nn = tiffBox[x][y][1]
-            # convert point to lat/lon
-            # temp_latlon = utm.to_latlon(ee, nn, zone_number=icc.utm_zone_number, zone_letter=icc.utm_zone_letter)
-            temp_latlon = pj(ee,nn, inverse=True)
-            # get value for that lat/lon
-            lat_np = np.array([temp_latlon[1]])
-            lon_np = np.array([temp_latlon[0]])
-            # populate our box with the tiff value for that point
-            # box_tiff_img[x][y] = tiff.get_value_by_latlon(lat_np, lon_np)
-            tiffBox[x][y][2] = tiff.get_value_by_latlon(lat_np, lon_np)
-            aa.append(ee)
-            bb.append(nn)
-
     # show the original tiff and then the box version
     # will show all 5 tiffs and 5 boxes that look purple
     # one of the boxes should look yellow since it's actually road at the icc point we chose
@@ -921,7 +923,6 @@ def getTiffBox(tiff,lat,lon,heading,distls,distrs):
     # plt.show()
     # plt.waitforbuttonpress()
     # tiffBox = np.concatenate(eenn_box,box_tiff_img)#Get the 
-    
 
     return tiffBox
 
@@ -1025,7 +1026,7 @@ if __name__ == '__main__':
     #     path2icc = r"Y:\AT_2021\MDR\20210620_7001\80802s_a_icc01.mat"
     #     dicti,survey_name = extractCrossSlope(path2las,path2icc)
 
-    paths = [r"Y:\AT_2021\MDR\20210620_7001\80802s_a_icc01.mat"]
+    paths = [r"Y:\AT_2021\MDR\20210620_7001\80802n_a_icc01.mat"]
     for path2icc in paths:
         date = os.path.basename(os.path.dirname(path2icc))
         iccname = os.path.basename(path2icc)
