@@ -723,7 +723,7 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon):
         if values.any() > -9998: #We will use this TIFF 
             break
     '''TODO CREATE THE BOX HERE'''
-    # tiffBox = np.array(x,y,z)
+    tiffBox = np.array(x,y,z)
     
 
 
@@ -775,7 +775,7 @@ def methodTIFF(las,distls,distrs):
         '''Just does slice'''
         # id_valid = offsets== xx*TT_SCALE
         # id_valid = abs(offsets - xx*TT_SCALE) < 1 #Not sure about this range yet...
-        id_valid = abs(offsets/TT_SCALE - xx) < 0.05 #Not sure about this range yet...
+        # id_valid = abs(offsets/TT_SCALE - xx) < 0.05 #Not sure about this range yet...
         p = points[id_valid]
         if len(p) < 1:
             z.append(nan)
