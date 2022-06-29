@@ -1,6 +1,7 @@
 #For the use of cross slope analysis
 from cmath import nan
 import os,glob,sys
+from turtle import forward
 import numpy as np
 import pandas
 from scipy.io import loadmat
@@ -22,7 +23,7 @@ FINDPMARKS = False
 DOVISUALIZE = False
 
 sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\LAS_kit')
-import LAS_CLASS 
+# import LAS_CLASS 
 sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\TIFF_kit')
 import TIFF_CLASS 
 lr = linear_model.LinearRegression()
@@ -558,6 +559,259 @@ def extractCrossSlope(path2las,path2icc):
     dicti = useICC(las,id_valid_below_sen1,id_valid_below_sen2,dicti,path2icc)
     return dicti, survey_name
 
+def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
+    dicti['Route'] = []
+    dicti['kms'] = []
+    dicti['lat'] = []
+    dicti['lon'] = []
+    dicti['elv'] = []
+    dicti['Super_Elevation'] = []
+    dicti['Crown_Slope'] = []
+    dicti['Compare'] = []
+    dicti['S1Fitted_%s'%survey_name] = []
+    dicti['S1HalvedLane_%s'%survey_name] = []
+    dicti['S2Fitted_%s'%survey_name] = []
+    dicti['S2HalvedLane_%s'%survey_name] = []
+
+    # distrs = 1.25
+    # distls = 2.50
+    # distrs = 1.75
+    # distls = 2.00
+    # distrs = 1.5
+    # distls = 1.5
+    distrs = 2.0
+    distls = 2.0
+    if FINDPMARKS:
+        # pmarkshp = r"Y:\AT_2021\ASSETS\pmarks\newMethod\20220204\merged\63002E_C1R1_R1R2.shp"
+        pmarkshp = os.path.join(LINE_FOLDER,path2icc.replace('m','shp'))
+        if os.path.exists(pmarkshp):
+            treeRS,treeLS,rs_off,ls_off,rs_ee,rs_nn,ls_ee,ls_nn = findLSRSLPT(pmarkshp)
+        else:
+            print('NO PMARKS AVAILABLE %s'%pmarkshp)
+
+    icc = loadICC(path2icc)
+    # arcIcc = loadmat(path2icc.replace('icc','chg'),struct_as_record=False,squeeze_me=True)['arc_chg']
+    # dmiIcc = loadmat(path2icc.replace('icc','chg'),struct_as_record=False,squeeze_me=True)['dmi_chg']
+    dmichain = (icc.ppgps.dmi * icc.chg_data.dx)
+    dmiFun = interp1d(dmichain,np.arange(0,len(dmichain)))
+    lat = icc.ppgps.lat
+    lon = icc.ppgps.lon
+    # DMIee,DMInn = pj(lon,lat)
+    # treedmi = KDTree(np.array([DMIee,DMInn]).T)
+
+    startChainage =  icc.refrst * icc.chg_data.dx
+    endChainage =  icc.secend * icc.chg_data.dx
+    st=startChainage
+    en=endChainage
+    if startChainage>endChainage:
+        st = endChainage
+        en = startChainage
+    stdmi = int(dmiFun(st))
+    lat = icc.ppgps.lat[stdmi]
+    lon = icc.ppgps.lon[stdmi]
+
+    posit = False
+    tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen00_*ZSTD*.tiff')), reverse=True)
+    if posit:
+        tiffList = sorted(glob.glob(os.path.join(path2TiffFolder,'*_sen00_*ZSTD*.tiff')))
+
+
+    # lasindex,lasdistance = las.find_lat_lon(lat,lon)#Point of 0m
+    # if lasdistance > 10:
+    #     print('wrong point %s'%lasdistance)
+    #     return
+    # laschain = ((las.lasin.tt_chainage_m[lasindex])/TT_SCALE)[0]
+    if False: #Input what SHOULD be the start point in lat/lon, for testing
+        # manuallatst = 51.843821 #63002
+        # manuallonst = -111.091651
+        manuallatst = 52.463126
+        manuallonst = -113.774405
+        manualindex,manualdistance = las.find_lat_lon(manuallatst,manuallonst)#Point of 0m
+        manualchain = (las.lasin.tt_chainage_m[manualindex])/TT_SCALE
+        print('manually checked start = %s    auto start = %s'%(manualchain[0],laschain))
+
+    for xdmi  in np.arange(st,en,SPACING): 
+        idmi = int(dmiFun(xdmi))
+        # idmi2 = int(dmiFun(xdmi+SPACING))
+        # idmi2 = min(idmi2,len(dmichain-2))
+        # dmi = icc.ppgps.dmi[idmi]
+        lat = icc.ppgps.lat[idmi]
+        lon = icc.ppgps.lon[idmi]
+        elv = icc.ppgps.elev[idmi]
+        # if dmi>icc.refrst and dmi<icc.secend:
+        if True:
+            if FINDPMARKS:
+                ee,nn = pj(lon,lat)
+                distrs,rsindex = treeRS.query([ee,nn])
+                distls,lsindex = treeLS.query([ee,nn])
+                print('LS:%.3f RS:%.3f'%(distls,distrs))
+                if distls>1.5 or distls<0.65:
+                    if distls>1.5:
+                        distls = 1.5
+                    if distls<0.65:
+                        distls = 0.65
+                if distrs>3 or distrs<1.5:
+                    if distrs>3:
+                        distrs = 3
+                    if distrs<1.5:
+                        distrs = 1.5
+                '''THERE IS A OFFSET DISCREPANCY BETWEEN THE LIDAR AND THE MDR LOCATION'''
+                ofst = 1#Rough estimate, looks pretty close
+                distrs += -ofst
+                distls += ofst
+                print('LS:%.3f RS:%.3f  CHANGEDTO'%(distls,distrs))
+                # buff = 0.2 #Extra little buffer
+                # distls += buff 
+                # distrs += buff 
+
+            # id_valid_km = las.filter_by_chainage(MIN=laschain-LONGITUDE_SEARCH,MAX=laschain+LONGITUDE_SEARCH)#Filter in the section we are looking at, multiplies by 500
+            # id_valid_km = las.filter_by_chainage(MIN=kmcheck2,MAX=kmcheck2+SPACING)#Filter in the section we are looking at, multiplies by 500
+            # km = kmcheck2 - OG + 27300#For val site
+            km = xdmi - st
+            # print('\nmdrkm = %s   laskm = %s'%(km,laschain))
+            # id_valid_below_sen1_KM = id_valid_below_sen1 & id_valid_km
+            # id_valid_below_sen2_KM = id_valid_below_sen2 & id_valid_km
+            slopes, slopetype = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon)
+            dicti['Route'].append(path2icc)
+            dicti['kms'].append(km/1000)
+            dicti['lat'].append(lat)
+            dicti['lon'].append(lon)
+            dicti['elv'].append(elv)
+            dicti['Compare'].append(None)
+            dicti['S1Fitted_%s'%survey_name].append(slopes[0])
+            dicti['S1HalvedLane_%s'%survey_name].append(slopes[1])
+            dicti['S2Fitted_%s'%survey_name].append(slopes[2])
+            dicti['S2HalvedLane_%s'%survey_name].append(slopes[3])
+            if slopetype == 'Crown':
+                dicti['Super_Elevation'].append(None)
+                dicti['Crown_Slope'].append(np.mean(slopes))
+            else:
+                dicti['Super_Elevation'].append(np.mean(slopes))
+                dicti['Crown_Slope'].append(None)
+            if startChainage>endChainage:
+                laschain = (laschain-SPACING)
+            else:
+                laschain = (laschain+SPACING)
+    return dicti
+
+def extractCrossSlopeTIFF(path2TiffFolder,path2icc):
+    dicti = {}
+    survey_name = os.path.basename(path2TiffFolder)[:-3]
+    date_folder = os.path.basename(os.path.dirname(path2TiffFolder))
+    OUTPUT_FOLDER_DATED = os.path.join(OUTPUT_FOLDER,date_folder)
+    if not os.path.exists(OUTPUT_FOLDER_DATED):
+        os.mkdir(OUTPUT_FOLDER_DATED)
+        global SURVERY_OUTPUT_FOLDER
+    SURVERY_OUTPUT_FOLDER = os.path.join(OUTPUT_FOLDER_DATED,survey_name)
+    print(SURVERY_OUTPUT_FOLDER)
+    if not os.path.exists(SURVERY_OUTPUT_FOLDER):
+        os.mkdir(SURVERY_OUTPUT_FOLDER)
+    print('[Processing] >> ',path2TiffFolder)
+
+    dicti = useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc)
+    return dicti, survey_name
+
+def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon):
+    slopes = []
+
+
+
+    for tiff in tiffList:
+        tiff = TIFF_CLASS.Geotiff(tiff)
+        # tiff.find_rot_angle_PCA()
+        values = tiff.get_value_by_latlon([lat],[lon])
+        if values.any() > -9998: #We will use this TIFF 
+            break
+    '''TODO CREATE THE BOX HERE'''
+    # tiffBox = np.array(x,y,z)
+    
+
+
+    # outname_sen1_KM = SURVERY_OUTPUT_FOLDER+r'\%s_KM%03d_sen01.las'%(survey_name,km_num)
+    # outname_sen2_KM = SURVERY_OUTPUT_FOLDER+r'\%s_KM%03d_sen02.las'%(survey_name,km_num)
+    # outname_sen1_KM = SURVERY_OUTPUT_FOLDER+r'\%s_%05dm_sen01.las'%(survey_name,km_num)
+    # outname_sen2_KM = SURVERY_OUTPUT_FOLDER+r'\%s_%05dm_sen02.las'%(survey_name,km_num)
+    outname_sen00_KM = SURVERY_OUTPUT_FOLDER+r'\%s_%05dm_sen00.las'%(survey_name,km_num)
+
+    outnames = [outname_sen00_KM]
+    # outnames = [outname_sen1_KM]
+    # valids = [id_valid_below_sen1_KM]
+    for a in range(len(outnames)):#Itterate over each sensor
+        outname = outnames[a]
+
+        if not os.path.exists(outname) or True:
+            
+            slope, newslope, visualxy, x, z, slopetype = methodTIFF(tiffBox,distls,distrs)
+            # slope, newslope, visualxy, x, z, slopetype = method2(las,valid,distls,distrs)
+
+            print('Sensor%d  %s Fit Line Reading = %3.3f%s   Half Lane Split  = %3.3f%s'%(a+1,slopetype,slope,'%',newslope,'%'))  
+            slopes.append(slope)
+            slopes.append(newslope)                  
+            if DOVISUALIZE:#Do a visulaize output
+                visualize(outname,visualxy[0],visualxy[1],x,z,distls,distrs,slope,newslope)
+            
+        else:
+            print('Already done: ',outname)
+    return slopes, slopetype
+
+def methodTIFF(las,distls,distrs):
+    '''This method takes an average of the longitudial points ang plots on a transverse'''
+    #Need something here to select points a certain distance away, get the height
+    # offsets = las.lasin.tt_trans_offset_m[valid]
+    # points = las.lasin.z[valid]
+    
+    x = list(np.arange(-6,8,0.1))#Not sure about side
+    # x = list(np.arange(-distrs,distls,0.1))#Not sure about side
+    z = []
+    trans_X = []
+    elev_Z = []
+    slptypesample = []
+    for xx in x:
+        '''Goes back to Full, wastes time'''
+        # id_valid = las.filter_by_offset(OFFSET=xx)
+        # newValid = valid & id_valid
+        # points = las.lasin.z[newValid]
+        # y.append(np.mean(points))
+        '''Just does slice'''
+        # id_valid = offsets== xx*TT_SCALE
+        # id_valid = abs(offsets - xx*TT_SCALE) < 1 #Not sure about this range yet...
+        id_valid = abs(offsets/TT_SCALE - xx) < 0.05 #Not sure about this range yet...
+        p = points[id_valid]
+        if len(p) < 1:
+            z.append(nan)
+            continue
+        avpoint = np.mean(p)
+        z.append(avpoint)
+
+        if xx > -distrs and xx < distls:
+            trans_X.append(xx)
+            elev_Z.append(avpoint)
+            '''Get the end points'''
+            lsz = avpoint
+            if len(trans_X) == 1:
+                rsz = avpoint
+        if 3.25 < xx < 4.25:
+            slptypesample.append(avpoint)
+
+
+    #Split lane in half reading
+    trans_X, elev_Z, slopetype = findType(slptypesample,trans_X,elev_Z,lsz,rsz)
+    halfdist = (distrs+distls)/2
+    half1 = np.mean(elev_Z[:len(trans_X)//2])
+    half2 = np.mean(elev_Z[len(trans_X)//2:])
+    newslope = ((half2-half1)/halfdist) *100
+
+    model = lr.fit(np.array(trans_X).reshape((-1, 1)),np.array(elev_Z))
+    slope = model.coef_[0] *100
+    # print('Fit Line Reading = %3.3f%s'%(slope*100,'%'))
+    # print('Half Lane Split  = %3.3f%s'%(newslope*100,'%'))
+    # diff = ((maxpoints - minpoints)/((distls+distrs)*2))*100
+    # print('Ends %s%s'%(diff,'%'))
+    visualxy = [trans_X,elev_Z]
+
+    return slope, newslope, visualxy, x, z, slopetype
+
+
 if __name__ == '__main__':
     # dicti = {'kms':[],'Compare':[],'S1Fitted':[],'S1HalvedLane':[],'S2Fitted':[],'S2HalvedLane':[]}  
     # for path2las in sorted(glob.glob(sys.argv[1])):
@@ -584,8 +838,10 @@ if __name__ == '__main__':
         date = os.path.basename(os.path.dirname(path2icc))
         iccname = os.path.basename(path2icc)
         iccname = iccname.split('icc')[0]
-        for path2las in glob.glob(r"X:\LiDAR\Combines\%s\%s*.las"%(date,iccname)):
-            dicti,survey_name = extractCrossSlope(path2las,path2icc)
+        # for path2las in glob.glob(r"X:\LiDAR\Combines\%s\%s*.las"%(date,iccname)):
+        #     dicti,survey_name = extractCrossSlope(path2las,path2icc)
+        for path2TiffFolder in glob.glob(r"Y:\AT_2021\ASSETS\tiffs\TIFF_STDEV\%s\%s*"%(date,iccname)):
+            dicti,survey_name = extractCrossSlopeTIFF(path2TiffFolder,path2icc)
 
         newdf = pd.DataFrame(dicti)
         newdf.to_csv(r'Y:\Users\Trevor\crossSlope\csvs\%s.csv'%survey_name,index=False)       
