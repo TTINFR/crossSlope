@@ -20,7 +20,7 @@ LINE_FOLDER = r'Y:\Users\Trevor\crossSlope'
 SPACING = 20 #Meter sapcing of segments
 LONGITUDE_SEARCH = SPACING/2 #Meter sapcing of segments
 FINDPMARKS = False
-DOVISUALIZE = True
+DOVISUALIZE = False
 
 # sys.path.append(r'y:\reza\bin\bin\repos\core_dev_kit\LAS_kit')
 # import LAS_CLASS 
@@ -577,6 +577,19 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
     dicti['S2Fitted_%s'%survey_name] = []
     dicti['S2HalvedLane_%s'%survey_name] = []
 
+
+
+    path2masterlist = r'Y:\Users\Trevor\crossSlope\shps\%s.shp'%survey_name
+    masterlist = pyshp.Writer(path2masterlist,3)
+    # masterlist = pyshp.Writer(path2masterlist,5)
+    masterlist.field('ROUTE','C',50)
+    masterlist.field('KM','C',50)
+    masterlist.field('Heading','C',50)
+    masterlist.field('Type','C',50)
+    masterlist.field('Slope','C',50)
+
+
+
     # distrs = 1.25
     # distls = 2.50
     # distrs = 1.75
@@ -681,7 +694,7 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
             # print('\nmdrkm = %s   laskm = %s'%(km,laschain))
             # id_valid_below_sen1_KM = id_valid_below_sen1 & id_valid_km
             # id_valid_below_sen2_KM = id_valid_below_sen2 & id_valid_km
-            slopes, slopetype,tiff = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon,heading,tiff)
+            slopes, slopetype,tiff,polyshape = getCrossSlopeTIFF(tiffList,survey_name,km,distls,distrs,lat,lon,heading,tiff)
             dicti['Route'].append(path2icc)
             dicti['kms'].append(km/1000)
             dicti['lat'].append(lat)
@@ -704,6 +717,11 @@ def useICCTIFF(path2TiffFolder,survey_name,dicti,path2icc):
             #     laschain = (laschain-SPACING)
             # else:
             #     laschain = (laschain+SPACING)
+
+            # masterlist.poly(polyshape)
+            masterlist.line(polyshape)
+            masterlist.record(iccname,km,heading,slopetype,slopes[1])
+
     return dicti
 
 def extractCrossSlopeTIFF(path2TiffFolder,path2icc):
@@ -744,7 +762,7 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading,
 
 
     '''CREATE THE BOX HERE'''
-    tiffBox = getTiffBox(tiff,lat,lon,heading)
+    tiffBox,polyshape = getTiffBox(tiff,lat,lon,heading)
 
     # outname_sen1_KM = SURVERY_OUTPUT_FOLDER+r'\%s_KM%03d_sen01.las'%(survey_name,km_num)
     # outname_sen2_KM = SURVERY_OUTPUT_FOLDER+r'\%s_KM%03d_sen02.las'%(survey_name,km_num)
@@ -774,7 +792,7 @@ def getCrossSlopeTIFF(tiffList,survey_name,km_num,distls,distrs,lat,lon,heading,
                     print('Broke visualize')
         else:
             print('Already done: ',outname)
-    return slopes, slopetype,tiff
+    return slopes, slopetype,tiff,polyshape
 
 def rotate(origin, point, angle):
     """
@@ -786,11 +804,14 @@ def rotate(origin, point, angle):
 
     qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
     qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+
+    print(abs(qx-px),abs(qy-py))
     return qx,qy
 
 
 
 def getTiffBox(tiff,lat,lon,heading):
+    '''THIS FUNCTION IS WRONG   It does not account for the rotational change, resulting in a cross slope reading that will always be NS EW rather than at the desired angle'''
     # icc = ICC_CLASS.ICC(path2icc)
     # # random dmi stuff
     # dmichain = (icc.icc_data.ppgps.dmi * icc.icc_data.chg_data.dx)
@@ -849,16 +870,27 @@ def getTiffBox(tiff,lat,lon,heading):
     '''Rotates each of these boundary points to use later in a spatial area'''
     # plt.scatter(test_en[0],test_en[1],c='y')
     # plt.title('%s'%heading)
-    _,box_t = rotate(test_en, [test_en[0],(test_en[1] + LONGITUDE_SEARCH)], math.radians(heading)) #TODO Check if this rotate is even correct
+    box_tx,box_t = rotate(test_en, [test_en[0],(test_en[1] + LONGITUDE_SEARCH)], math.radians(heading)) #TODO Check if this rotate is even correct
     # plt.scatter(_,box_t,c='b')
-    _,box_b = rotate(test_en, [test_en[0],(test_en[1] - LONGITUDE_SEARCH)], math.radians(heading)) #TODO Check if this rotate is even correct
+    box_bx,box_b = rotate(test_en, [test_en[0],(test_en[1] - LONGITUDE_SEARCH)], math.radians(heading)) #TODO Check if this rotate is even correct
     # plt.scatter(_,box_b,c='r')
-    box_l,_ = rotate(test_en, [(test_en[0] - needThisToGetSlopeType-2),test_en[1]], math.radians(heading)) #TODO Check if this rotate is even correct
+    box_l,box_ly = rotate(test_en, [(test_en[0] - needThisToGetSlopeType-2),test_en[1]], math.radians(heading)) #TODO Check if this rotate is even correct
     # plt.scatter(box_l,_,c='g')
-    box_r,_ = rotate(test_en, [(test_en[0] + needThisToGetSlopeType),test_en[1]], math.radians(heading)) #TODO Check if this rotate is even correct
+    box_r,box_ry = rotate(test_en, [(test_en[0] + needThisToGetSlopeType),test_en[1]], math.radians(heading)) #TODO Check if this rotate is even correct
     # plt.scatter(box_r,_,c='black')
     # plt.axis([test_en[0]-30, test_en[0]+30, test_en[1]-30, test_en[1]+30])
     # plt.show()
+    
+    # visualbox = [[pj(box_tx,box_t, inverse=True)],[pj(box_r,box_ry, inverse=True)],[pj(box_bx,box_b, inverse=True)],[pj(box_l,box_ly, inverse=True)]]
+    minilat = []
+    minilon = []
+    for onebox in [[box_l,box_t],[box_r,box_t],[box_r,box_b],[box_l,box_b],[box_l,box_t]]:#WRONG
+        box_x = onebox[0]
+        box_y = onebox[1]
+        onelon,onelat = pj(box_x,box_y, inverse=True)
+        minilon.append(onelon)
+        minilat.append(onelat)
+    visualbox = [np.array([minilon,minilat]).T]
 
 
     
@@ -924,7 +956,7 @@ def getTiffBox(tiff,lat,lon,heading):
     # plt.waitforbuttonpress()
     # tiffBox = np.concatenate(eenn_box,box_tiff_img)#Get the 
 
-    return tiffBox
+    return tiffBox, visualbox
 
     
 
